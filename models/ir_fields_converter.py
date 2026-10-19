@@ -5,6 +5,43 @@ class IrFieldsConverter(models.AbstractModel):
     _inherit = "ir.fields.converter"
 
     @api.model
+    def _str_to_one2many(self, model, field, records):
+        if field.comodel_name == "product.template.attribute.line":
+            records = self.tha_merge_attribute_value_rows(records)
+        return super()._str_to_one2many(model, field, records)
+
+    @api.model
+    def tha_merge_attribute_value_rows(self, records):
+        """Fold value-only continuation rows within this product's lines.
+
+        The extractor has already grouped rows by product. Never carry state
+        between conversions, so a new product must supply its own attribute.
+        Keep line references and additional writable fields as native rows.
+        """
+        merged = []
+        for record in records:
+            values = record.get("value_ids")
+            previous = merged[-1] if merged else {}
+            previous_values = previous.get("value_ids")
+            if (
+                not record.get("attribute_id")
+                and set(record) <= {"attribute_id", "value_ids"}
+                and previous.get("attribute_id")
+                and values and len(values) == 1
+                and previous_values and len(previous_values) == 1
+                and len(values[0]) == 1
+                and set(values[0]) == set(previous_values[0])
+                and next(iter(values[0])) in (None, "id", ".id")
+            ):
+                key = next(iter(values[0]))
+                merged[-1] = dict(previous, value_ids=[{
+                    key: ",".join(filter(None, [previous_values[0][key], values[0][key]])),
+                }])
+            else:
+                merged.append(record)
+        return merged
+
+    @api.model
     def for_model(self, model, fromtype=str):
         convert = super().for_model(model, fromtype=fromtype)
         if model._name != "product.template.attribute.line" or fromtype is not str:
